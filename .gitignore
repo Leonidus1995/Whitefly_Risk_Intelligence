@@ -1,0 +1,70 @@
+# -----------------------------
+# macOS / system files
+# -----------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# -----------------------------
+# Python cache / build files
+# -----------------------------
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+build/
+dist/
+*.egg-info/
+
+# -----------------------------
+# Virtual environments
+# -----------------------------
+.venv/
+venv/
+env/
+ENV/
+*.env
+.env
+
+
+# -----------------------------
+# Data files
+# Keep generated/project data local unless intentionally published
+# -----------------------------
+data/raw/
+data/interim/
+data/processed/
+*.csv
+*.tsv
+*.xlsx
+*.xls
+*.parquet
+*.feather
+*.sqlite
+*.db
+
+# -----------------------------
+# Outputs, logs, reports
+# -----------------------------
+outputs/
+*.log
+
+# -----------------------------
+# Documents and large writeups
+# -----------------------------
+*.pdf
+*.doc
+*.docx
+*.ppt
+*.pptx
+
+# -----------------------------
+# IDE/editor files
+# -----------------------------
+.vscode/
+.idea/
+
