@@ -8,10 +8,27 @@ from rasterio.mask import mask
 
 # Define the paths and constants
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-METADATA_PATH = PROJECT_ROOT / "data" / "interim" / "trap_metadata.csv"
-TRAP_COUNT_PATH = PROJECT_ROOT / "data" / "processed" / "stopwhitefly_trap_weekly_counts_with_metadata.csv"
+
+DATA_DIR = PROJECT_ROOT / "data"
+PROCESSED_DIR = DATA_DIR / "processed"
+RAW_NLCD_DIR = DATA_DIR / "raw" / "nlcd"
+
+METADATA_PATH = DATA_DIR / "interim" / "trap_metadata.csv"
+TRAP_COUNT_PATH = PROCESSED_DIR / "stopwhitefly_trap_weekly_counts_with_metadata.csv"
+
+INTERIM_GEOSPATIAL_DIR = DATA_DIR / "interim" / "geospatial"
+BUFFER_OUTPUT_PATH = INTERIM_GEOSPATIAL_DIR / "trap_buffers_500m_1km.gpkg"
+
+PROCESSED_MERGED_FILE = PROCESSED_DIR / "stopwhitefly_trap_weekly_counts_with_nlcd_landcover.csv"
+PROCESSED_NLCD_FEATURES = PROCESSED_DIR / "site_year_landcover_features_nlcd.csv"
 
 PROJECTED_CRS = "EPSG:26917"
+
+METADATA_REQ_COLS = [
+    'site_id', 
+    'latitude', 
+    'longitude'
+]
 
 NLCD_CLASS_GROUPS = {
     "water": [11],
@@ -24,15 +41,6 @@ NLCD_CLASS_GROUPS = {
     "cultivated_crops": [82],
     "wetlands": [90, 95],
 }
-
-DATA_DIR = PROJECT_ROOT / "data"
-RAW_NLCD_DIR = DATA_DIR / "raw" / "nlcd"
-INTERIM_GEOSPATIAL_DIR = DATA_DIR / "interim" / "geospatial"
-BUFFER_OUTPUT_PATH = INTERIM_GEOSPATIAL_DIR / "trap_buffers_500m_1km.gpkg"
-
-PROCESSED_DIR = DATA_DIR / "processed"
-PROCESSED_MERGED_FILE = PROCESSED_DIR / "stopwhitefly_trap_weekly_counts_with_nlcd_landcover.csv"
-PROCESSED_NLCD_FEATURES = PROCESSED_DIR / "site_year_landcover_features_nlcd.csv"
 
 EXPECTED_GROUPS = [
     "water",
@@ -69,8 +77,11 @@ EXPECTED_FEATURE_COLUMNS = [
     'wetlands_fraction_1000m'
  ]
 
+
+
+
 # Function 1:
-def load_and_validate_trap_metadata():
+def load_and_validate_trap_metadata(path: Path) -> pd.DataFrame:
     """
     Loads and validates the trap metadata
     
@@ -80,6 +91,84 @@ def load_and_validate_trap_metadata():
     Outputs:
         - Trap metadata pandas df
     """
+    print("Starting Function 1: Loading and validating trap metadata")
+
+    # Read the trap metadata and store as data frame
+    metadata_df = pd.read_csv(path, dtype={"site_id": "string"})
+
+    # Verify if the parsed dataset is empty
+    if metadata_df.empty:
+        raise ValueError("The parsed trap metadata df is empty.")
+
+    # Verify all the three required columns are present
+    missing_cols = []
+    for col in METADATA_REQ_COLS:
+        if col not in metadata_df.columns.tolist():
+            missing_cols.append(col)
+
+    if len(missing_cols) != 0:
+        raise ValueError(f"There are missing required columns in the parsed metadata: {missing_cols}")
+
+    # Strip blank spaces (if any) from each of the site IDs
+    metadata_df["site_id"] = metadata_df["site_id"].str.strip()
+
+    # Validate if there are blank spaces as site IDs
+    blank_site_ids = metadata_df.loc[metadata_df["site_id"] == "", ]
+    if blank_site_ids.shape[0] != 0:
+        raise ValueError(f"There are {len(blank_site_ids)} blank site IDs. Row indexes: {blank_site_ids.index.tolist()}")
+
+    # Verify if the site ID column has NULL values
+    missing_sites = metadata_df.loc[metadata_df["site_id"].isna(), ]
+    if missing_sites.shape[0] != 0:
+        raise ValueError(f"The 'site_id' column has {len(missing_sites)} missing values. Row indexes: {missing_sites.index.tolist()}")
+
+    # Verify if there are duplicate site IDs
+    duplicated_sites = metadata_df["site_id"].duplicated()
+    if duplicated_sites.any():
+        dup_values = metadata_df.loc[duplicated_sites, "site_id"]
+        raise ValueError(f"There are duplicated 'site_id' column values: {list(dup_values)}")
+
+    # Verify if there are missing values in the Latitude column
+    missing_latitude = metadata_df["latitude"].isna()
+    if missing_latitude.any():
+        raise ValueError(f"There are {missing_latitude.sum()} missing values in the 'latitude' column.")
+
+    # Verify if there are missing values in the Longitude column
+    missing_longitude = metadata_df["longitude"].isna()
+    if missing_longitude.any():
+        raise ValueError(f"There are {missing_longitude.sum()} missing values in the 'longitude' column.")
+
+    # Verify if there are non-numeric values in the Latitude column
+    # If not, then set the column dtype as float
+    bad_latitude = pd.to_numeric(metadata_df["latitude"], errors="coerce").isna()
+    if bad_latitude.any():
+        bad_lat_rows = metadata_df.loc[bad_latitude, "latitude"]
+        raise ValueError(f"There are non-numeric values in the column 'latitude': {bad_lat_rows.tolist()}")
+
+    metadata_df["latitude"] = metadata_df["latitude"].astype("float")
+
+    # Verify if there are non-numeric values in the Longitude column
+    # If not, then set the column dtype as float
+    bad_longitude = pd.to_numeric(metadata_df["longitude"], errors="coerce").isna()
+    if bad_longitude.any():
+        bad_lon_rows = metadata_df.loc[bad_longitude, "longitude"]
+        raise ValueError(f"There are non-numeric values in the column 'longitude': {bad_lon_rows.tolist()}")
+
+    metadata_df["longitude"] = metadata_df["longitude"].astype("float")
+
+    # Verify if the Latitude values lie in the valid range
+    if (metadata_df["latitude"].min() < -90) or (metadata_df["latitude"].max() > 90):
+        raise ValueError("Latitude column has values outside the permissible bounds.")
+
+    # Verify if the Longitude values lie in the valid range
+    if (metadata_df["longitude"].min() < -180) or (metadata_df["longitude"].max() > 180):
+        raise ValueError("Longitude column has values outside the permissible bounds.")
+
+    return metadata_df
+
+
+
+
 
 # Function 2:
 def load_and_validate_weekly_trap_counts():
