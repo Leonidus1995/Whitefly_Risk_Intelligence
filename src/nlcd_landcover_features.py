@@ -1,5 +1,6 @@
 # Load required libraries
 import pandas as pd
+import numpy as np
 import geopandas as gpd
 from pathlib import Path
 import rasterio
@@ -25,9 +26,16 @@ PROCESSED_NLCD_FEATURES = PROCESSED_DIR / "site_year_landcover_features_nlcd.csv
 PROJECTED_CRS = "EPSG:26917"
 
 METADATA_REQ_COLS = [
-    'site_id', 
-    'latitude', 
-    'longitude'
+    "site_id", 
+    "latitude", 
+    "longitude"
+]
+
+WEEKLY_TRAP_COUNTS_REQ_COLS = [
+    "site_id",
+    "year",
+    "date_collected",
+    "whitefly_count"
 ]
 
 NLCD_CLASS_GROUPS = {
@@ -125,8 +133,8 @@ def load_and_validate_trap_metadata(path: Path) -> pd.DataFrame:
     # Verify if there are duplicate site IDs
     duplicated_sites = metadata_df["site_id"].duplicated()
     if duplicated_sites.any():
-        dup_values = metadata_df.loc[duplicated_sites, "site_id"]
-        raise ValueError(f"There are duplicated 'site_id' column values: {list(dup_values)}")
+        dup_values = metadata_df.loc[duplicated_sites, "site_id"].unique()
+        raise ValueError(f"There are duplicated 'site_id' column values: {dup_values.tolist()}")
 
     # Verify if there are missing values in the Latitude column
     missing_latitude = metadata_df["latitude"].isna()
@@ -171,7 +179,7 @@ def load_and_validate_trap_metadata(path: Path) -> pd.DataFrame:
 
 
 # Function 2:
-def load_and_validate_weekly_trap_counts():
+def load_and_validate_weekly_trap_counts(path: Path) -> pd.DataFrame:
     """
     Loads and validates weekly whitefly trap counts
 
@@ -181,6 +189,189 @@ def load_and_validate_weekly_trap_counts():
     Outputs:
         - Weekly whitefly counts pandas df
     """
+    count_df = pd.read_csv(path, dtype={"site_id": "string"})
+
+    # Validate against empty df
+    if count_df.empty:
+        raise ValueError("Parsed weekly whitefly trap counts df is empty.")
+
+    # Validate if the required columns exist
+    missing_req_cols = []
+    for col in WEEKLY_TRAP_COUNTS_REQ_COLS:
+        if col not in count_df.columns.tolist():
+            missing_req_cols.append(col)
+
+    if len(missing_req_cols) != 0:
+        raise ValueError(
+            f"There are missing required columns in the parsed trap counts df: {missing_req_cols}"
+        )
+
+    # Strip blank spaces from the 'site_id' column values
+    count_df["site_id"] = count_df["site_id"].str.strip()
+
+    # Check for blank site_id column values
+    blank_sites = count_df.loc[
+        count_df["site_id"] == "",
+        "site_id"
+    ].index.tolist()
+
+    if len(blank_sites) != 0:
+        raise ValueError(
+            f"There are {len(blank_sites)} blank site_id values. Row indexes: {blank_sites}"
+        )
+
+    # Validate against missing site_id
+    missing_sites = count_df.loc[
+        count_df["site_id"].isna(), "site_id"
+        ].index.tolist()
+    
+    if len(missing_sites) != 0:
+        raise ValueError(
+            f"There are {len(missing_sites)} missing site IDs. Row indexes: {missing_sites}"
+            )
+
+    # Parse dates with invalid values converted to NaT
+    count_df["date_collected"] = pd.to_datetime(count_df["date_collected"], errors="coerce")
+
+    # Normalize to remove time stamps from date column
+    count_df["date_collected"] = count_df["date_collected"].dt.normalize()
+
+    # Validate against missing collection dates
+    missing_dates = count_df.loc[
+        count_df["date_collected"].isna(), "date_collected"
+        ].index.tolist()
+    
+    if len(missing_dates) != 0:
+        raise ValueError(
+            f"There are {len(missing_dates)} missing dates of sample collection. Row indexes: {missing_dates}"
+            )
+
+    # Verify unique 'site_id x date_collected'
+    duplicate_sites_dates = (
+        count_df.groupby(["site_id", "date_collected"])
+        .size()
+        .reset_index(name = "count")
+        .query("count > 1")
+    )
+    
+    if duplicate_sites_dates.shape[0] != 0:
+        raise ValueError(
+            f"There are duplicate 'site_id x date_collected' values: {duplicate_sites_dates[['site_id', 'date_collected']].values.tolist()}"
+            )
+
+    # Validate 'year' column
+    # Convert the column to numeric dtype
+    count_df["year"] = pd.to_numeric(count_df["year"])
+
+    # Validate for missing year column values
+    missing_year = count_df.loc[
+        count_df["year"].isna(), "year"
+        ].index.tolist()
+    
+    if len(missing_year) != 0:
+        raise ValueError(
+            f"There are {len(missing_year)} missing values in the 'year' column. Row indexes: {missing_year}"
+            )
+    
+    # Validate for finite year values
+    infinite_years = count_df.loc[
+        (count_df["year"] == np.inf) | 
+        (count_df["year"] == -np.inf),
+        "year"
+    ].index.tolist()
+
+    if len(infinite_years) != 0:
+        raise ValueError(
+            f"There are {len(infinite_years)} infinite year values. "
+            f"Row indexes: {infinite_years}"
+            )
+
+    # Validate for fractional year values
+    fractional_years = count_df.loc[count_df["year"] % 1 != 0, "year"].index.tolist()
+    if len(fractional_years) != 0:
+        raise ValueError(
+            f"There are {len(fractional_years)} invalid fraction year values in the column 'year'. " 
+            f"Row indexes: {fractional_years}"
+        )
+
+    # Validate for negative year values
+    negative_years = count_df.loc[
+        count_df["year"] < 0,
+        "year"
+    ].index.tolist()
+
+    if len(negative_years) != 0:
+        raise ValueError(
+            f"There are {len(negative_years)} rows with negative year values. " 
+            f"Row indexes: {negative_years}"
+        )
+
+    # Convert year column to integer dtype
+    count_df["year"] = count_df["year"].astype("int")
+
+    # Validate for year value match
+    non_matching_years = count_df.index[
+        count_df["year"] != count_df["date_collected"].dt.year
+        ].tolist()
+
+    if len(non_matching_years) != 0:
+        raise ValueError(
+            f"There are {len(non_matching_years)} rows with non-matching years in the 'year' and 'date_collected' columns."
+            )
+
+    # Validate 'whitefly_count' column
+    # Convert column to numeric dtype
+    count_df["whitefly_count"] = pd.to_numeric(count_df["whitefly_count"])
+
+    # Validate for missing counts
+    missing_count = count_df.loc[
+        count_df["whitefly_count"].isna(), "whitefly_count"
+    ].index.tolist()
+
+    if len(missing_count) != 0:
+        raise ValueError(
+            f"There are {len(missing_count)} missing whitefly count values. Row indexes: {missing_count}"
+        )
+
+    # Validate for finite counts
+    infinite_counts = count_df.loc[
+        (count_df["whitefly_count"] == np.inf) | 
+        (count_df["whitefly_count"] == -np.inf),
+        "whitefly_count"
+    ].index.tolist()
+
+    if len(infinite_counts) != 0:
+        raise ValueError(
+            f"There are {len(infinite_counts)} infinite count values. "
+            f"Row indexes: {infinite_counts}"
+            )
+
+    # Validate for fractional counts
+    fractional_counts = count_df.loc[count_df["whitefly_count"] % 1 != 0, "whitefly_count"].index.tolist()
+    if len(fractional_counts) != 0:
+        raise ValueError(
+            f"There are {len(fractional_counts)} invalid fractional whitefly counts in the column 'whitefly_count'. " 
+            f"Row indexes: {fractional_counts}"
+        )
+
+    # Validate for negative count values
+    negative_counts = count_df.loc[
+        count_df["whitefly_count"] < 0,
+        "whitefly_count"
+    ].index.tolist()
+
+    if len(negative_counts) != 0:
+        raise ValueError(
+            f"There are {len(negative_counts)} rows with negative whitefly counts. Row indexes: {negative_counts}"
+        )
+
+    # Convert the 'whitefly_count' column to integer dtype
+    count_df["whitefly_count"] = count_df["whitefly_count"].astype("int")
+
+    return count_df
+
+
+
 
 # Function 3:
 def create_projected_trap_points():
