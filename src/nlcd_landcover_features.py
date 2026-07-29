@@ -374,18 +374,115 @@ def load_and_validate_weekly_trap_counts(path: Path) -> pd.DataFrame:
 
 
 # Function 3:
-def create_projected_trap_points():
+def create_projected_trap_points(metadata_df) -> gpd.GeoDataFrame:
     """
     1. Builds the trap metadata geo df with geographic CRS
     2. Reprojects the geo df onto a meter-based CRS
 
     Inputs:
         - Trap metadata pandas df
-        - Projected CRS
 
     Outputs:
         - Trap metadata GeoDataFrame with meter-based CRS
     """
+    # Check for missing required metadata columns
+    missing_cols = []
+    for col in METADATA_REQ_COLS:
+        if col not in metadata_df.columns.tolist():
+            missing_cols.append(col)
+
+    if len(missing_cols) != 0:
+        raise ValueError(
+            f"There are missing required metadata columns: {missing_cols}"
+            )
+
+    # Convert metadata df to a GeoDataFrame with source CRS
+    metadata_gdf = gpd.GeoDataFrame(
+        metadata_df.copy(),
+        geometry=gpd.points_from_xy(x=metadata_df["longitude"], y=metadata_df["latitude"]),
+        crs="EPSG:4326"
+    )
+
+    # Re-project the GeoDataFrame onto a meter-based target CRS
+    metadata_gdf_projected_crs = metadata_gdf.to_crs(PROJECTED_CRS) 
+
+    # Check against re-projection fail
+    if not (metadata_gdf_projected_crs.crs == PROJECTED_CRS):
+        raise ValueError("Re-projection onto a meter-based 'EPSG:26917' CRS failed.")
+
+    # Check to see if input row count is preserved
+    input_row_count = metadata_df.shape[0]
+    projected_gdf_row_count = metadata_gdf_projected_crs.shape[0]
+
+    if projected_gdf_row_count != input_row_count:
+        raise ValueError("Row counts do not match for metadata df and metadata gdf.")
+
+    # Verify that site IDs remain unchanged between the input df and output gdf
+    input_df_sites = metadata_df["site_id"].unique().tolist()
+    projected_gdf_sites = metadata_gdf_projected_crs["site_id"].unique().tolist()
+
+    if set(input_df_sites) != set(projected_gdf_sites):
+        raise ValueError(
+            "Site IDs differ between input df and projected geo df."
+        )
+
+    if input_df_sites != projected_gdf_sites:
+        raise ValueError(
+            "Site IDs between input df and projected geo df are identical but their ordering changed."
+            )
+
+    # Check for unique site IDs
+    mask = metadata_gdf_projected_crs.duplicated("site_id", keep=False)
+    duplicate_sites = metadata_gdf_projected_crs.loc[mask, "site_id"].unique()
+    if len(duplicate_sites) != 0:
+        raise ValueError(
+            f"There are duplicate site IDs in the projected metadata geo df: {duplicate_sites}"
+            )
+
+    # Check if Geometry is missing, empty, invalid, or not a Point
+    if "geometry" not in metadata_gdf_projected_crs.columns.tolist():
+        raise ValueError(
+            "The 'geometry' column is missing from the projected trap metadata Geo df."
+            )
+
+    missing_geometries = metadata_gdf_projected_crs["geometry"].isna()
+    if missing_geometries.any():
+        raise ValueError(
+            f"There are missing values in the 'geometry' column: {missing_geometries.sum()}"
+            )
+
+    if metadata_gdf_projected_crs.geometry.is_empty.any():
+        raise ValueError(
+            "There are empty values in the 'geometry' column."
+        )
+
+    if not (metadata_gdf_projected_crs.geometry.is_valid.all()):
+        raise ValueError(
+            "There are invalid values in the 'geometry' column."
+        )
+
+    if not (metadata_gdf_projected_crs.geometry.geom_type == "Point").all():
+        raise ValueError(
+            "The type of 'geometry' column is not POINT"
+        )
+
+    invalid_values = [np.nan, -np.inf, np.inf]
+    x_invalid = metadata_gdf_projected_crs.geometry.x.isin(invalid_values)
+    y_invalid = metadata_gdf_projected_crs.geometry.y.isin(invalid_values)
+
+    if x_invalid.any() or y_invalid.any():
+        raise ValueError(
+            "There are invalid or non-finite values in the geometry column"
+        )
+    
+    return metadata_gdf_projected_crs
+
+
+
+
+
+
+    
 
 # Function 4:
 def build_validate_save_buffers():
