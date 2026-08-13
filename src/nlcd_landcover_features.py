@@ -485,7 +485,7 @@ def create_projected_trap_points(metadata_df) -> gpd.GeoDataFrame:
     
 
 # Function 4:
-def build_validate_save_buffers():
+def build_validate_save_buffers(projected_points_gdf, radii, output_path):
     """
     1. Create 500m and 1km buffers around trap sites
     2. Validate if buffer counts equal to the trap site counts
@@ -501,6 +501,126 @@ def build_validate_save_buffers():
     Outputs:
         - Buffers GeoDataFrame
     """
+    # verify 'projected_points_gdf' is a non-empty GeoDF
+    if projected_points_gdf.empty:
+        raise ValueError("The input trap metadata geo df with projected points is empty.")
+
+    # verify if all the required columns are present in the loaded 'projected_points_gdf'
+    req_cols = ["site_id", "trap_label", "geometry"]
+    missing_cols = []
+    for col in req_cols:
+        if col not in projected_points_gdf.columns:
+            missing_cols.append(col)
+    if len(missing_cols) != 0:
+        raise ValueError(
+            "There are missing required columns in the input projected_points_gdf:", missing_cols
+            )
+
+    # ensure 'site_id' column is non-null, non-blank, and unique
+    null_site_ids = projected_points_gdf["site_id"].isna()
+    if null_site_ids.any():
+        raise ValueError(
+            f"There are total {null_site_ids.sum()} null values in the 'site_id' column."
+            f"Row indexes for the null site IDs: {projected_points_gdf.index[null_site_ids].tolist()}"
+        )
+
+    blank_site_ids = projected_points_gdf["site_id"].astype(str).str.strip() == ""
+    if blank_site_ids.any():
+        raise ValueError(
+            f"There are total {blank_site_ids.sum()} blank site IDs."
+            f"Row indexes for the blank site IDs: {projected_points_gdf.index[blank_site_ids].tolist()}"
+        )
+
+    duplicate_sites_mask = projected_points_gdf.duplicated(subset=["site_id"], keep=False)
+    duplicate_site_values = projected_points_gdf.loc[duplicate_sites_mask, "site_id"].unique().tolist()
+    if duplicate_sites_mask.any():
+        raise ValueError(
+            f"There are total {duplicate_sites_mask.sum()} duplicate site IDs."
+            f"Duplicate site IDs: {duplicate_site_values}"
+        )
+
+    # ensure 'geometry' column is non-missing, non-empty, valid, and exclusively Point
+    null_geometry_mask = projected_points_gdf['geometry'].isna()
+    if null_geometry_mask.any():
+        raise ValueError(
+            f"There are total {null_geometry_mask.sum()} null values in the 'geometry' column."
+            f"Row indexes for the null geometry values: {projected_points_gdf.index[null_geometry_mask].tolist()}"
+        )
+
+    empty_geometry_mask = projected_points_gdf['geometry'].apply(lambda g: g.is_empty)
+    if empty_geometry_mask.any():
+        raise ValueError(
+            f"There are total {empty_geometry_mask.sum()} blank values in the 'geometry' column."
+            f"Row indexes for the blank geometry values: {projected_points_gdf.index[empty_geometry_mask].tolist()}"
+        )
+
+    invalid_geometry_mask = ~projected_points_gdf["geometry"].is_valid
+    if invalid_geometry_mask.any():
+        raise ValueError(
+            f"There are total {invalid_geometry_mask.sum()} invalid geometries in the 'projected_points_gdf'."
+            f"Row indexes for invalid geometries: {projected_points_gdf.index[invalid_geometry_mask].tolist()}"
+        )
+
+    non_point_geometries = ~projected_points_gdf["geometry"].geom_type.eq("Point")
+    if non_point_geometries.any():
+        raise ValueError(
+            f"There are total {non_point_geometries.sum()} geometries that are not POINT."
+            f"Row indexes for the non-Point geometries: {projected_points_gdf.index[non_point_geometries].tolist()}"
+        )
+
+    # Verify to check if the CRS is equivalent to EPSG:26917
+    if projected_points_gdf.crs != "EPSG:26917":
+        raise ValueError(
+            "The CRS of trap points geo df is different from EPSG:26917"
+            f"The current trap points geo df has CRS: {projected_points_gdf.crs}"
+            )
+
+    # Reject radii values that cannot be converted into numeric type
+    invalid_radii = []
+    for x in radii:
+        try:
+            float(x)
+        except (TypeError, ValueError):
+            invalid_radii.append(x)
+
+    if invalid_radii:
+        raise ValueError(
+            "The input radii iterable contain values that are not numeric."
+            f"The invalid radius in input are: {invalid_radii}"
+            )
+
+    # Verify there is no infinite values in the radii iterable
+    infinite_radii = [x for x in radii if np.isinf(x)]
+    if infinite_radii:
+        raise ValueError(
+            f"There are infinite values in the radii iterable: {infinite_radii}"
+            )
+
+    # Verify there is no negative value in the radii iterable
+    negative_radii = [x for x in radii if x < 0]
+    if negative_radii:
+        raise ValueError(
+            f"There are negative values in the radii iterable: {negative_radii}"
+        )
+
+    # Verify there are no duplicate values in the radii iterable
+    if len(radii) != len(set(radii)):
+        raise ValueError("There are duplicate values in the radii iterable.")
+
+    # Verify the input radii iterable equals to EXPECTED_RADII
+    missing_radii = [x for x in radii if x not in EXPECTED_RADII]
+    if missing_radii:
+        raise ValueError(
+            f"There are missing expected radii values in the input: {missing_radii}"
+            )
+
+
+
+
+
+
+
+
 
 # Function 5:
 def discover_and_validate_nlcd_rasters():
